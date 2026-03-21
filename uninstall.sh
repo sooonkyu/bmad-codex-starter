@@ -3,7 +3,17 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOL_ROOT="$(cd "$SCRIPT_DIR" && pwd)"
-PROJECT_ROOT="$(git -C "$TOOL_ROOT/../.." rev-parse --show-toplevel 2>/dev/null || true)"
+
+resolve_project_root() {
+  local tool_root="$1"
+  if [[ "$(basename "$tool_root")" == "bmad-codex" && "$(basename "$(dirname "$tool_root")")" == "tools" ]]; then
+    (cd "$tool_root/../.." && pwd)
+  else
+    git -C "$tool_root" rev-parse --show-toplevel 2>/dev/null || (cd "$tool_root" && pwd)
+  fi
+}
+
+PROJECT_ROOT="$(resolve_project_root "$TOOL_ROOT")"
 
 if [[ -z "${PROJECT_ROOT}" ]]; then
   echo "프로젝트 루트를 찾지 못했습니다."

@@ -3,10 +3,30 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOL_ROOT="$(cd "$SCRIPT_DIR" && pwd)"
-PROJECT_ROOT="$(git -C "$TOOL_ROOT/../.." rev-parse --show-toplevel 2>/dev/null || true)"
+
+resolve_project_root() {
+  local tool_root="$1"
+  if [[ "$(basename "$tool_root")" == "bmad-codex" && "$(basename "$(dirname "$tool_root")")" == "tools" ]]; then
+    (cd "$tool_root/../.." && pwd)
+  else
+    git -C "$tool_root" rev-parse --show-toplevel 2>/dev/null || (cd "$tool_root" && pwd)
+  fi
+}
+
+package_path_from_project_root() {
+  local tool_root="$1"
+  if [[ "$(basename "$tool_root")" == "bmad-codex" && "$(basename "$(dirname "$tool_root")")" == "tools" ]]; then
+    echo "tools/bmad-codex"
+  else
+    echo "."
+  fi
+}
+
+PROJECT_ROOT="$(resolve_project_root "$TOOL_ROOT")"
+PACKAGE_ROOT_REL="$(package_path_from_project_root "$TOOL_ROOT")"
 
 if [[ -z "${PROJECT_ROOT}" ]]; then
-  echo "프로젝트 루트를 찾지 못했습니다. tools/bmad-codex 형태로 넣어주세요."
+  echo "프로젝트 루트를 찾지 못했습니다. repo 루트 또는 tools/bmad-codex 형태를 확인해주세요."
   exit 1
 fi
 
@@ -76,8 +96,16 @@ out.write_text(str(path) if path else '', encoding='utf-8')
 print(f'wrote {out}')
 PY2
 
+if [[ "$PACKAGE_ROOT_REL" == "." ]]; then
+  BOOTSTRAP_CMD="bash ./bootstrap.sh"
+  ORCHESTRATOR_CMD="python3 ./orchestrator/main.py"
+else
+  BOOTSTRAP_CMD="bash $PACKAGE_ROOT_REL/bootstrap.sh"
+  ORCHESTRATOR_CMD="python3 $PACKAGE_ROOT_REL/orchestrator/main.py"
+fi
+
 echo
 echo "설치 완료"
-echo "자동 부트스트랩+실행: bash tools/bmad-codex/bootstrap.sh"
-echo "자동 실행: python3 tools/bmad-codex/orchestrator/main.py"
-echo "특정 스토리 지정: python3 tools/bmad-codex/orchestrator/main.py --story 2.1"
+echo "자동 부트스트랩+실행: $BOOTSTRAP_CMD"
+echo "자동 실행: $ORCHESTRATOR_CMD"
+echo "특정 스토리 지정: $ORCHESTRATOR_CMD --story 2.1"

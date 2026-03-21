@@ -3,7 +3,17 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOL_ROOT="$SCRIPT_DIR"
-PROJECT_ROOT="$(git -C "$TOOL_ROOT/../.." rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+resolve_project_root() {
+  local tool_root="$1"
+  if [[ "$(basename "$tool_root")" == "bmad-codex" && "$(basename "$(dirname "$tool_root")")" == "tools" ]]; then
+    (cd "$tool_root/../.." && pwd)
+  else
+    git -C "$tool_root" rev-parse --show-toplevel 2>/dev/null || (cd "$tool_root" && pwd)
+  fi
+}
+
+PROJECT_ROOT="$(resolve_project_root "$TOOL_ROOT")"
 
 cd "$PROJECT_ROOT"
 
@@ -47,7 +57,7 @@ python3 scripts/bmadx/bootstrap_sprint_status.py || true
 if [[ "${BMADX_AUTO_RUN:-1}" == "1" ]]; then
   if command -v codex >/dev/null 2>&1; then
     echo "[INFO] starting orchestrator"
-    python3 tools/bmad-codex/orchestrator/main.py "$@"
+    python3 "$TOOL_ROOT/orchestrator/main.py" "$@"
   else
     echo "[INFO] setup finished. codex CLI missing, so orchestrator was not started."
   fi

@@ -7,7 +7,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[2]
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+if PACKAGE_ROOT.name == "bmad-codex" and PACKAGE_ROOT.parent.name == "tools":
+    ROOT = PACKAGE_ROOT.parents[1]
+else:
+    ROOT = PACKAGE_ROOT
 STATE = ROOT / ".bmadx" / "state"
 SESSIONS = STATE / "sessions.json"
 REVIEWS = ROOT / ".bmadx" / "reviews"
