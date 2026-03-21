@@ -2,30 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TOOL_ROOT="$SCRIPT_DIR"
-
-resolve_project_root() {
-  local tool_root="$1"
-  if [[ -n "${BMADX_PROJECT_ROOT:-}" ]]; then
-    printf '%s\n' "$BMADX_PROJECT_ROOT"
-  elif [[ "$(basename "$tool_root")" == "bmad-codex" && "$(basename "$(dirname "$tool_root")")" == "tools" ]]; then
-    (cd "$tool_root/../.." && pwd)
-  else
-    git -C "$tool_root" rev-parse --show-toplevel 2>/dev/null || (cd "$tool_root" && pwd)
-  fi
-}
-
-package_path_from_project_root() {
-  local tool_root="$1"
-  if [[ "$(basename "$tool_root")" == "bmad-codex" && "$(basename "$(dirname "$tool_root")")" == "tools" ]]; then
-    printf '%s\n' "tools/bmad-codex"
-  else
-    printf '%s\n' "."
-  fi
-}
-
-PROJECT_ROOT="$(resolve_project_root "$TOOL_ROOT")"
-PACKAGE_ROOT_REL="$(package_path_from_project_root "$TOOL_ROOT")"
+TOOL_ROOT="${BMADX_TOOL_ROOT:-$SCRIPT_DIR}"
+PROJECT_ROOT="${BMADX_PROJECT_ROOT:-$(cd "$TOOL_ROOT/../.." && pwd)}"
 
 cd "$PROJECT_ROOT"
 export BMADX_PROJECT_ROOT="$PROJECT_ROOT"
@@ -45,8 +23,10 @@ need_cmd bash
 need_cmd python3
 need_cmd git
 
+python3 "$TOOL_ROOT/detect_host_env.py" --project-root "$PROJECT_ROOT" --write >/dev/null || true
+
 if ! command -v codex >/dev/null 2>&1; then
-  echo "[WARN] codex CLI not found in PATH. Setup can continue, but run.sh will fail until codex is installed."
+  echo "[WARN] codex CLI not found in PATH. Setup can continue, but run.py/run.sh will fail until codex is installed."
 fi
 
 if [[ ! -d _bmad ]]; then
@@ -73,11 +53,5 @@ if [[ "${BMADX_AUTO_RUN:-0}" == "1" ]]; then
   exec bash "$TOOL_ROOT/run.sh" "$@"
 fi
 
-if [[ "$PACKAGE_ROOT_REL" == "." ]]; then
-  NEXT_RUN_CMD="bash ./run.sh"
-else
-  NEXT_RUN_CMD="bash $PACKAGE_ROOT_REL/run.sh"
-fi
-
 echo "[BMADX] bootstrap complete"
-echo "[BMADX] next: $NEXT_RUN_CMD"
+echo "[BMADX] next: python tools/bmad-codex/run.py"

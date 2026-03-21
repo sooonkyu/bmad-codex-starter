@@ -2,47 +2,21 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TOOL_ROOT="$SCRIPT_DIR"
+TOOL_ROOT="${BMADX_TOOL_ROOT:-$SCRIPT_DIR}"
 
-resolve_project_root() {
-  local tool_root="$1"
-  if [[ -n "${BMADX_PROJECT_ROOT:-}" ]]; then
-    printf '%s\n' "$BMADX_PROJECT_ROOT"
-  elif [[ "$(basename "$tool_root")" == "bmad-codex" && "$(basename "$(dirname "$tool_root")")" == "tools" ]]; then
-    (cd "$tool_root/../.." && pwd)
-  else
-    git -C "$tool_root" rev-parse --show-toplevel 2>/dev/null || (cd "$tool_root" && pwd)
-  fi
-}
-
-package_path_from_project_root() {
-  local tool_root="$1"
-  if [[ "$(basename "$tool_root")" == "bmad-codex" && "$(basename "$(dirname "$tool_root")")" == "tools" ]]; then
-    printf '%s\n' "tools/bmad-codex"
-  else
-    printf '%s\n' "."
-  fi
-}
-
-PROJECT_ROOT="$(resolve_project_root "$TOOL_ROOT")"
-PACKAGE_ROOT_REL="$(package_path_from_project_root "$TOOL_ROOT")"
+if [[ -n "${BMADX_PROJECT_ROOT:-}" ]]; then
+  PROJECT_ROOT="$BMADX_PROJECT_ROOT"
+elif git rev-parse --show-toplevel >/dev/null 2>&1; then
+  PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+else
+  PROJECT_ROOT="$(cd "$TOOL_ROOT/../.." && pwd)"
+fi
 
 cd "$PROJECT_ROOT"
 export BMADX_PROJECT_ROOT="$PROJECT_ROOT"
 export BMADX_TOOL_ROOT="$TOOL_ROOT"
 
 mkdir -p .agents/skills .codex/agents .bmadx/state .bmadx/reviews .bmadx/runs scripts/bmadx scripts/gates
-
-copy_if_missing() {
-  local src="$1"
-  local dst="$2"
-  if [[ ! -e "$dst" ]]; then
-    cp "$src" "$dst"
-    echo "created: $dst"
-  else
-    echo "skip   : $dst already exists"
-  fi
-}
 
 copy_force() {
   local src="$1"
@@ -96,6 +70,7 @@ for role in bmadx-sm bmadx-pm bmadx-po bmadx-dev bmadx-qa; do
   link_force "$TOOL_ROOT/templates/skills/$role" "$PROJECT_ROOT/.agents/skills/$role"
 done
 
+copy_force "$TOOL_ROOT/detect_host_env.py" "$PROJECT_ROOT/scripts/bmadx/detect_host_env.py"
 copy_force "$TOOL_ROOT/templates/index_bmad.py" "$PROJECT_ROOT/scripts/bmadx/index_bmad.py"
 copy_force "$TOOL_ROOT/templates/discover_env.py" "$PROJECT_ROOT/scripts/bmadx/discover_env.py"
 copy_force "$TOOL_ROOT/templates/sprint_status.py" "$PROJECT_ROOT/scripts/bmadx/sprint_status.py"
@@ -120,6 +95,7 @@ out.write_text(json.dumps({'project_root': str(root), 'tool_root': str(tool)}, i
 print(f'wrote {out}')
 PY
 
+python3 "$TOOL_ROOT/detect_host_env.py" --project-root "$PROJECT_ROOT" --write >/dev/null || true
 python3 scripts/bmadx/index_bmad.py || true
 python3 scripts/bmadx/discover_env.py || true
 python3 scripts/bmadx/bootstrap_sprint_status.py || true
@@ -135,11 +111,5 @@ out.write_text(str(path) if path else '', encoding='utf-8')
 print(f'wrote {out}')
 PY
 
-if [[ "$PACKAGE_ROOT_REL" == "." ]]; then
-  NEXT_RUN_CMD="bash ./run.sh"
-else
-  NEXT_RUN_CMD="bash $PACKAGE_ROOT_REL/run.sh"
-fi
-
 echo "[BMADX] install complete"
-echo "[BMADX] next: $NEXT_RUN_CMD"
+echo "[BMADX] next: python tools/bmad-codex/run.py"

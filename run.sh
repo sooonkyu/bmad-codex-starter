@@ -2,32 +2,17 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TOOL_ROOT="$SCRIPT_DIR"
-
-resolve_project_root() {
-  local tool_root="$1"
-  if [[ -n "${BMADX_PROJECT_ROOT:-}" ]]; then
-    printf '%s\n' "$BMADX_PROJECT_ROOT"
-  elif [[ "$(basename "$tool_root")" == "bmad-codex" && "$(basename "$(dirname "$tool_root")")" == "tools" ]]; then
-    (cd "$tool_root/../.." && pwd)
-  else
-    git -C "$tool_root" rev-parse --show-toplevel 2>/dev/null || (cd "$tool_root" && pwd)
-  fi
-}
-
-PROJECT_ROOT="$(resolve_project_root "$TOOL_ROOT")"
+TOOL_ROOT="${BMADX_TOOL_ROOT:-$SCRIPT_DIR}"
+PROJECT_ROOT="${BMADX_PROJECT_ROOT:-$(cd "$TOOL_ROOT/../.." && pwd)}"
 
 cd "$PROJECT_ROOT"
 export BMADX_PROJECT_ROOT="$PROJECT_ROOT"
 export BMADX_TOOL_ROOT="$TOOL_ROOT"
 
-if ! command -v codex >/dev/null 2>&1; then
-  echo "[ERROR] codex CLI not found in PATH"
-  exit 1
-fi
 if ! command -v python3 >/dev/null 2>&1; then
   echo "[ERROR] python3 not found in PATH"
   exit 1
 fi
 
+python3 "$TOOL_ROOT/detect_host_env.py" --project-root "$PROJECT_ROOT" --write >/dev/null || true
 exec python3 "$TOOL_ROOT/orchestrator/main.py" "$@"
