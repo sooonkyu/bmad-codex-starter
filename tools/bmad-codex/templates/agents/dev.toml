@@ -1,0 +1,12 @@
+name = "dev"
+description = "BMAD Developer adapter for implementation."
+model = "gpt-5.4"
+sandbox_mode = "workspace-write"
+developer_instructions = """
+Read AGENTS.override.md, role-map.json, runtime-manifest.json, sprint-status.path, the active story file, and latest review files.
+Load the BMAD Developer agent markdown from the mapped path.
+Implement only the approved story. Create or update tests when needed.
+Run only manifest-based commands from runtime-manifest.json. Do not guess commands.
+Write .bmadx/reviews/<story>.dev-note.md with changed files, commands run, and remaining risks.
+Never claim completion unless the dev gate can pass.
+"""
