@@ -16,6 +16,24 @@ cd "$PROJECT_ROOT"
 export BMADX_PROJECT_ROOT="$PROJECT_ROOT"
 export BMADX_TOOL_ROOT="$TOOL_ROOT"
 
+find_python() {
+  if command -v python3 >/dev/null 2>&1; then
+    echo python3
+    return 0
+  fi
+  if command -v python >/dev/null 2>&1; then
+    echo python
+    return 0
+  fi
+  return 1
+}
+
+PYTHON_BIN="$(find_python || true)"
+if [[ -z "$PYTHON_BIN" ]]; then
+  echo "[ERROR] python3/python not found in PATH"
+  exit 1
+fi
+
 mkdir -p .agents/skills .codex/agents .bmadx/state .bmadx/reviews .bmadx/runs scripts/bmadx scripts/gates
 
 copy_force() {
@@ -84,7 +102,7 @@ copy_force "$TOOL_ROOT/templates/qa_gate.sh" "$PROJECT_ROOT/scripts/gates/qa_gat
 chmod +x "$PROJECT_ROOT/scripts/gates/"*.sh
 
 [[ -f .bmadx/state/sessions.json ]] || echo '{}' > .bmadx/state/sessions.json
-python3 - <<'PY'
+"$PYTHON_BIN" - <<'PY'
 from pathlib import Path
 import json, os
 root = Path(os.environ['BMADX_PROJECT_ROOT']).resolve()
@@ -95,11 +113,11 @@ out.write_text(json.dumps({'project_root': str(root), 'tool_root': str(tool)}, i
 print(f'wrote {out}')
 PY
 
-python3 "$TOOL_ROOT/detect_host_env.py" --project-root "$PROJECT_ROOT" --write >/dev/null || true
-python3 scripts/bmadx/index_bmad.py || true
-python3 scripts/bmadx/discover_env.py || true
-python3 scripts/bmadx/bootstrap_sprint_status.py || true
-python3 - <<'PY'
+"$PYTHON_BIN" "$TOOL_ROOT/detect_host_env.py" --project-root "$PROJECT_ROOT" --write >/dev/null || true
+"$PYTHON_BIN" scripts/bmadx/index_bmad.py || true
+"$PYTHON_BIN" scripts/bmadx/discover_env.py || true
+"$PYTHON_BIN" scripts/bmadx/bootstrap_sprint_status.py || true
+"$PYTHON_BIN" - <<'PY'
 from pathlib import Path
 import os, sys
 root = Path(os.environ['BMADX_PROJECT_ROOT']).resolve()

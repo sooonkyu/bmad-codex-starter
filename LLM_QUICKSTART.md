@@ -2,34 +2,40 @@
 
 ## Goal
 
-Set up this adapter in the current project root, then run it so it automatically reads BMAD status and continues the next valid step.
+현재 프로젝트 루트에 이 어댑터를 설치하고, host-env 기반으로 안전하게 실행해서 BMAD sprint status에 따라 다음 단계를 자동 진행합니다.
 
 ## Standard assumptions
 
-- The current directory is the project root.
-- This repository should live at `tools/bmad-codex`.
-- BMAD project files may already exist under `_bmad/`, `_bmad-output/`, or `.bmad-ephemeral/`.
+- 현재 디렉터리는 프로젝트 루트입니다.
+- 이 저장소는 `tools/bmad-codex`에 있어야 합니다.
+- BMAD 파일은 `_bmad/`, `_bmad-output/`, `.bmad-ephemeral/` 아래에 있을 수 있습니다.
 
 ## Required sequence for a coding LLM
 
-1. If `tools/bmad-codex` does not exist, clone this repository into that path.
-2. Read `tools/bmad-codex/README.md`.
-3. Run `python3 tools/bmad-codex/bootstrap.py`.
-4. Read `.bmadx/state/host-env.json`.
-5. Read `.bmadx/state/runtime-manifest.json`.
-6. Use the detected `preferred_mode` and command arrays from `host-env.json`. Do not guess the OS.
-7. If bootstrap fails, fix the problem and rerun it.
-8. Run `python3 tools/bmad-codex/run.py`.
-9. Let the orchestrator choose the next story from `sprint-status.yaml` automatically.
+1. `tools/bmad-codex`가 없으면 이 저장소를 그 경로로 clone 합니다.
+2. `tools/bmad-codex/README.md`를 읽습니다.
+3. 먼저 Python 런처를 실행합니다.
+   - Linux/macOS/WSL: `python3 tools/bmad-codex/bootstrap.py`
+   - Windows: `py -3 .\tools\bmad-codex\bootstrap.py`
+4. `.bmadx/state/host-env.json`을 읽습니다.
+5. `.bmadx/state/runtime-manifest.json`을 읽습니다.
+6. `preferred_mode`, `execution.*`, `readiness_messages`를 기준으로만 다음 명령을 선택합니다.
+7. 운영체제를 추측해서 임의 명령을 만들지 않습니다.
+8. bootstrap이 실패하면 환경 문제를 먼저 수정한 뒤 다시 실행합니다.
+9. 그 다음 matching Python 런처로 `run.py`를 실행합니다.
+10. `sprint-status.yaml`을 보고 오케스트레이터가 다음 스토리를 자동 선택하게 둡니다.
 
 ## Windows rule
 
-If the host is Windows and `preferred_mode` is `windows-wsl`, do not run Git Bash commands directly. Let `bootstrap.py` and `run.py` delegate into WSL.
+- `wsl.exe`가 있다고 해서 곧바로 WSL 준비 완료라고 판단하지 않습니다.
+- usable Linux distro와 WSL 내부 `bash/python3/git/codex`가 모두 있을 때만 `windows-wsl`을 사용합니다.
+- 그 외에는 `host-env.json`의 진단 메시지를 먼저 확인합니다.
+- Windows에서는 raw Git Bash 명령보다 Python 런처를 우선 사용합니다.
 
 ## Done criteria
 
-- `bootstrap.py` completes successfully
-- `.bmadx/state/host-env.json` exists
-- `.bmadx/state/runtime-manifest.json` exists
-- `.bmadx/state/planner.json` is updated during orchestration
-- the active gate script exits with code 0 before claiming completion
+- `bootstrap.py`가 성공적으로 끝납니다.
+- `.bmadx/state/host-env.json`이 생성됩니다.
+- `.bmadx/state/runtime-manifest.json`이 생성됩니다.
+- `.bmadx/state/planner.json`이 orchestration 중 갱신됩니다.
+- 완료를 주장하기 전에 해당 gate script exit code가 0입니다.

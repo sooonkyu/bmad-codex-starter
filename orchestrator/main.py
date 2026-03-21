@@ -84,6 +84,14 @@ def codex_cmd() -> list[str]:
     return ['codex']
 
 
+def command_available(token: str) -> bool:
+    if token.lower() in ('wsl.exe', 'wsl'):
+        return shutil.which(token) is not None
+    if any(sep in token for sep in ('/', '\\')):
+        return Path(token).exists()
+    return shutil.which(token) is not None
+
+
 def run_local(cmd: list[str]) -> tuple[int, str]:
     proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
     out = (proc.stdout or '') + ('\n' + proc.stderr if proc.stderr else '')
@@ -119,7 +127,7 @@ def save_sessions(data: dict[str, str]) -> None:
 
 def codex_exec(role: str, prompt: str) -> tuple[int, str]:
     base = codex_cmd()
-    if shutil.which(base[0]) is None and os.path.basename(base[0]).lower() != 'wsl.exe':
+    if not command_available(base[0]):
         return 127, f'codex CLI not found: {base[0]}'
     sessions = load_sessions()
     session_id = sessions.get(role)

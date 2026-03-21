@@ -9,11 +9,26 @@ from pathlib import Path
 import detect_host_env
 
 
-def wsl_path(win_path: Path) -> str:
-    proc = subprocess.run(['wsl.exe', 'wslpath', '-a', str(win_path)], capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise SystemExit(proc.stderr.strip() or 'Failed to convert path through wslpath')
-    return proc.stdout.strip()
+def windows_to_wsl_path(path: Path) -> str:
+    resolved = str(path.resolve())
+    if len(resolved) >= 2 and resolved[1] == ':':
+        drive = resolved[0].lower()
+        tail = resolved[2:].replace('\\', '/').lstrip('/')
+        return f'/mnt/{drive}/{tail}' if tail else f'/mnt/{drive}'
+    return resolved.replace('\\', '/')
+
+
+def print_readiness(env: dict) -> None:
+    print('[BMADX] host environment is not ready for the requested execution path.')
+    for msg in env.get('readiness_messages', []):
+        print(f'[BMADX] {msg}')
+    wsl = env.get('wsl', {})
+    if wsl.get('installed'):
+        print(f"[BMADX] WSL usable distro: {wsl.get('usable_distro')!r}")
+        print(f"[BMADX] WSL requirements: {wsl.get('requirements')}")
+    native = env.get('native', {})
+    if native:
+        print(f"[BMADX] Native checks: bash={native.get('bash', {}).get('ok')}, python={native.get('python', {}).get('ok')}, git={native.get('git', {}).get('ok')}, codex={native.get('codex', {}).get('ok')}")
 
 
 def main(argv: list[str]) -> int:
@@ -23,23 +38,35 @@ def main(argv: list[str]) -> int:
     detect_host_env.write_state(project_root, env)
 
     mode = env['preferred_mode']
+    env_vars = {**os.environ, 'BMADX_PROJECT_ROOT': str(project_root), 'BMADX_TOOL_ROOT': str(tool_root)}
+
     if mode == 'windows-wsl':
-        project_wsl = wsl_path(project_root)
-        tool_wsl = wsl_path(tool_root)
+        distro = env.get('wsl', {}).get('usable_distro')
+        if not distro:
+            print_readiness(env)
+            return 1
+        project_wsl = windows_to_wsl_path(project_root)
+        tool_wsl = windows_to_wsl_path(tool_root)
         cmd = [
-            'wsl.exe', 'bash', '-lc',
+            'wsl.exe', '-d', distro, '--', 'bash', '-lc',
             f'export BMADX_PROJECT_ROOT="{project_wsl}"; '
             f'export BMADX_TOOL_ROOT="{tool_wsl}"; '
             f'bash "{tool_wsl}/bootstrap.sh"'
         ]
-        return subprocess.run(cmd).returncode
+        return subprocess.run(cmd, env=env_vars).returncode
+
+    if mode == 'windows-native':
+        if not env.get('native', {}).get('bash', {}).get('ok'):
+            print_readiness(env)
+            return 1
+        cmd = ['bash', str(tool_root / 'bootstrap.sh'), *argv[1:]]
+        return subprocess.run(cmd, env=env_vars).returncode
 
     if mode == 'windows-native-limited':
-        print('[BMADX] Windows native mode is limited. Install WSL and rerun bootstrap.py.')
+        print_readiness(env)
         return 1
 
     cmd = ['bash', str(tool_root / 'bootstrap.sh'), *argv[1:]]
-    env_vars = {**os.environ, 'BMADX_PROJECT_ROOT': str(project_root), 'BMADX_TOOL_ROOT': str(tool_root)}
     return subprocess.run(cmd, env=env_vars).returncode
 
 
