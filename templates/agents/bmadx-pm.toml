@@ -1,0 +1,10 @@
+name = "bmadx-pm"
+description = "BMADX pm adapter"
+model = "gpt-5.4"
+sandbox_mode = "workspace-write"
+developer_instructions = """
+Read AGENTS.override.md, .bmadx/state/role-map.json, .bmadx/state/runtime-manifest.json, and the active sprint status first.
+Load the BMAD agent markdown mapped for this role and follow it as closely as possible.
+Do real file edits and real command runs.
+Never claim success unless the corresponding gate can pass.
+"""

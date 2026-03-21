@@ -1,24 +1,58 @@
-# LLM Quickstart
+# LLM quickstart
 
-이 저장소는 GitHub에서는 패키지 루트가 평탄화된 구조입니다. 실제 프로젝트에는 보통 `tools/bmad-codex`로 clone 해서 사용합니다.
+## Goal
 
-프로젝트 루트라면 아래 순서대로 실행하세요.
+Set up this adapter in the **current project root**, then run it so it automatically reads BMAD status and continues the next valid step.
+
+The published repository itself is flat at the repo root. Inside a real target project, the recommended install path is still `tools/bmad-codex`.
+
+## Standard assumptions
+
+- The current directory is the project root.
+- This repository should live at `tools/bmad-codex`.
+- BMAD project files may already exist under `_bmad/`, `_bmad-output/`, or `.bmad-ephemeral/`.
+
+## Steps for a coding LLM
+
+1. If `tools/bmad-codex` does not exist, clone this repository into that path.
+2. Read `tools/bmad-codex/README.md`.
+3. If running on Windows PowerShell, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\bmad-codex\bootstrap.ps1
+powershell -ExecutionPolicy Bypass -File .\tools\bmad-codex\run.ps1
+```
+
+4. If running on Linux/macOS/WSL, run:
 
 ```bash
-mkdir -p tools
-git clone <THIS_REPO_URL> tools/bmad-codex
 bash tools/bmad-codex/bootstrap.sh
+bash tools/bmad-codex/run.sh
 ```
 
-설치가 끝난 뒤 오케스트레이터만 다시 돌리고 싶다면:
+5. If bootstrap fails:
+   - inspect `.bmadx/state/install-context.json`
+   - inspect `.bmadx/state/runtime-manifest.json`
+   - inspect `.bmadx/state/sprint-status.path`
+   - inspect `.bmadx/state/last-gate-*.log`
+   - fix the underlying issue and rerun bootstrap
 
-```bash
-python3 tools/bmad-codex/orchestrator/main.py
-```
+6. During execution:
+   - read the BMAD sprint status file
+   - automatically choose the next story/status transition
+   - do real file edits and real command runs
+   - do not summarize instead of acting
+   - only treat a phase as complete if its gate script exits 0
 
-이 저장소 자체를 루트에서 직접 테스트 중이라면 아래 명령도 사용할 수 있습니다.
+## If WSL is missing on Windows
+
+Tell the user to open an elevated PowerShell and install WSL first, then rerun the PowerShell wrapper.
+
+## Local package repo testing
+
+If you are already inside this package repository root rather than a target project:
 
 ```bash
 bash ./bootstrap.sh
-python3 ./orchestrator/main.py
+bash ./run.sh
 ```

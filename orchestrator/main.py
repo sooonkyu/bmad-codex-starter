@@ -2,16 +2,39 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-if PACKAGE_ROOT.name == "bmad-codex" and PACKAGE_ROOT.parent.name == "tools":
-    ROOT = PACKAGE_ROOT.parents[1]
-else:
-    ROOT = PACKAGE_ROOT
+
+def find_project_root() -> Path:
+    env_root = os.environ.get("BMADX_PROJECT_ROOT")
+    if env_root:
+        return Path(env_root).resolve()
+    candidates = [Path.cwd(), Path(__file__).resolve()]
+    for start in candidates:
+        p = start if start.is_dir() else start.parent
+        for base in [p, *p.parents]:
+            marker = base / ".bmadx" / "state" / "install-context.json"
+            if marker.exists():
+                try:
+                    data = json.loads(marker.read_text(encoding="utf-8"))
+                    proj = data.get("project_root")
+                    if proj:
+                        return Path(proj).resolve()
+                except Exception:
+                    pass
+            if (base / "tools" / "bmad-codex").exists() and (base / ".bmadx").exists():
+                return base.resolve()
+            if (base / ".bmadx").exists() and (base / "orchestrator").exists() and (base / "templates").exists():
+                return base.resolve()
+    return Path(__file__).resolve().parents[1]
+
+
+ROOT = find_project_root()
 STATE = ROOT / ".bmadx" / "state"
 SESSIONS = STATE / "sessions.json"
 REVIEWS = ROOT / ".bmadx" / "reviews"
@@ -51,6 +74,7 @@ def ensure_state() -> None:
         write_json(SESSIONS, {})
     must(["python3", "scripts/bmadx/index_bmad.py"])
     must(["bash", "scripts/gates/discover_env_gate.sh"])
+    must(["python3", "scripts/bmadx/bootstrap_sprint_status.py"])
     sprint = locate_sprint_status(ROOT)
     (STATE / "sprint-status.path").write_text(str(sprint) if sprint else "", encoding="utf-8")
 
@@ -64,6 +88,8 @@ def save_sessions(data: dict[str, str]) -> None:
 
 
 def codex_exec(role: str, prompt: str) -> tuple[int, str]:
+    if shutil.which("codex") is None:
+        return 127, "codex CLI not found"
     sessions = load_sessions()
     session_id = sessions.get(role)
     if session_id:
@@ -71,10 +97,12 @@ def codex_exec(role: str, prompt: str) -> tuple[int, str]:
     else:
         cmd = ["codex", "exec", "--json", "--full-auto", "--sandbox", "workspace-write", "--cd", str(ROOT), prompt]
     proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
-    output = proc.stdout.strip()
+    raw = (proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")
+    (STATE / f"last-codex-{role}.raw.log").write_text(raw, encoding="utf-8")
+
     new_thread_id = None
     final_texts: list[str] = []
-    for line in output.splitlines():
+    for line in (proc.stdout or "").splitlines():
         line = line.strip()
         if not line:
             continue
@@ -92,7 +120,7 @@ def codex_exec(role: str, prompt: str) -> tuple[int, str]:
     if new_thread_id:
         sessions[role] = new_thread_id
         save_sessions(sessions)
-    return proc.returncode, "\n\n".join(final_texts).strip()
+    return proc.returncode, "\n\n".join(final_texts).strip() or raw.strip()
 
 
 def role_map() -> dict:
@@ -262,35 +290,30 @@ def parse_args(argv: list[str]) -> dict[str, Any]:
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     ensure_state()
-
     for _ in range(args["max_cycles"]):
         spath, data = load_sprint_status(ROOT)
         if spath is None:
-            print("sprint-status.yaml 을 찾지 못했습니다.")
+            print("sprint-status.yaml not found")
             return 1
         action = choose_next_action(ROOT, data, forced_story=args["forced_story"])
         set_planner_state(action)
         print(json.dumps(action, ensure_ascii=False, indent=2))
-
         phase = action.get("phase")
         if phase == "done":
-            print("완료: 더 진행할 스토리가 없습니다.")
+            print("Done: no actionable stories remain.")
             return 0
-
         if phase == "story":
             ok = run_story_cycle(action["story_key"])
             if ok:
                 continue
-            print("스토리 검토 미통과 -> SM 재진입")
+            print("Story review failed -> re-entering SM")
             continue
-
         if phase == "dev":
             ok = run_dev_qa_cycle(action["story_key"])
             if ok:
                 continue
-            print("DEV/QA 미통과 -> DEV 재진입")
+            print("DEV/QA failed -> re-entering DEV")
             continue
-
         if phase == "qa":
             rc, out = codex_exec("qa", qa_prompt(action["story_key"]))
             print(out)
@@ -299,24 +322,20 @@ def main(argv: list[str]) -> int:
             if gate("qa", action["story_key"]):
                 continue
             write_status(ROOT, action["story_key"], "in-progress")
-            print("QA 미통과 -> DEV로 복귀")
+            print("QA failed -> returning to DEV")
             continue
-
         if phase == "retrospective":
             retro_key = action["retro_key"]
             rc, out = codex_exec("sm", retrospective_prompt(retro_key))
             print(out)
             if rc != 0:
                 return rc
-            # best effort mark complete
             from sprint_status import write_status as _ws
             _ws(ROOT, retro_key, "completed")
             continue
-
-        print(f"지원하지 않는 phase: {phase}")
+        print(f"Unsupported phase: {phase}")
         return 1
-
-    print("최대 cycle 도달로 중단했습니다.")
+    print("Stopped after reaching max cycles.")
     return 1
 
 
