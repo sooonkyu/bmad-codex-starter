@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -34,10 +35,12 @@ def print_readiness(env: dict) -> None:
 def main(argv: list[str]) -> int:
     tool_root = Path(__file__).resolve().parent
     project_root = Path(os.environ.get('BMADX_PROJECT_ROOT') or tool_root.parent.parent).resolve()
-    env = detect_host_env.detect(project_root)
+    env = detect_host_env.detect(project_root, tool_root=tool_root)
     detect_host_env.write_state(project_root, env)
 
     mode = env['preferred_mode']
+    execution = env.get('execution', {})
+    native_cmd = execution.get('bootstrap_native') or ['bash', str(tool_root / 'bootstrap.sh')]
     env_vars = {**os.environ, 'BMADX_PROJECT_ROOT': str(project_root), 'BMADX_TOOL_ROOT': str(tool_root)}
 
     if mode == 'windows-wsl':
@@ -47,11 +50,12 @@ def main(argv: list[str]) -> int:
             return 1
         project_wsl = windows_to_wsl_path(project_root)
         tool_wsl = windows_to_wsl_path(tool_root)
+        extra = ' '.join(shlex.quote(x) for x in argv[1:])
         cmd = [
             'wsl.exe', '-d', distro, '--', 'bash', '-lc',
             f'export BMADX_PROJECT_ROOT="{project_wsl}"; '
             f'export BMADX_TOOL_ROOT="{tool_wsl}"; '
-            f'bash "{tool_wsl}/bootstrap.sh"'
+            f'bash "{tool_wsl}/bootstrap.sh" {extra}'
         ]
         return subprocess.run(cmd, env=env_vars).returncode
 
@@ -59,14 +63,14 @@ def main(argv: list[str]) -> int:
         if not env.get('native', {}).get('bash', {}).get('ok'):
             print_readiness(env)
             return 1
-        cmd = ['bash', str(tool_root / 'bootstrap.sh'), *argv[1:]]
+        cmd = [*native_cmd, *argv[1:]]
         return subprocess.run(cmd, env=env_vars).returncode
 
     if mode == 'windows-native-limited':
         print_readiness(env)
         return 1
 
-    cmd = ['bash', str(tool_root / 'bootstrap.sh'), *argv[1:]]
+    cmd = [*native_cmd, *argv[1:]]
     return subprocess.run(cmd, env=env_vars).returncode
 
 

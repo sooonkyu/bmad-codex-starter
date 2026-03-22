@@ -38,10 +38,12 @@ def print_readiness(env: dict) -> None:
 def main(argv: list[str]) -> int:
     tool_root = Path(__file__).resolve().parent
     project_root = Path(os.environ.get('BMADX_PROJECT_ROOT') or tool_root.parent.parent).resolve()
-    env = detect_host_env.detect(project_root)
+    env = detect_host_env.detect(project_root, tool_root=tool_root)
     detect_host_env.write_state(project_root, env)
 
     mode = env['preferred_mode']
+    execution = env.get('execution', {})
+    native_cmd = execution.get('run_native') or ['bash', str(tool_root / 'run.sh')]
     env_vars = {**os.environ, 'BMADX_PROJECT_ROOT': str(project_root), 'BMADX_TOOL_ROOT': str(tool_root)}
 
     if mode == 'windows-wsl':
@@ -65,14 +67,14 @@ def main(argv: list[str]) -> int:
         if not native.get('bash', {}).get('ok') or not native.get('codex', {}).get('ok'):
             print_readiness(env)
             return 1
-        cmd = ['bash', str(tool_root / 'run.sh'), *argv[1:]]
+        cmd = [*native_cmd, *argv[1:]]
         return subprocess.run(cmd, env=env_vars).returncode
 
     if mode == 'windows-native-limited':
         print_readiness(env)
         return 1
 
-    cmd = ['bash', str(tool_root / 'run.sh'), *argv[1:]]
+    cmd = [*native_cmd, *argv[1:]]
     return subprocess.run(cmd, env=env_vars).returncode
 
 

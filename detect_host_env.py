@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import locale
 import os
 import platform
+import re
 import shlex
 import shutil
 import subprocess
@@ -28,6 +30,20 @@ def run_capture(cmd: list[str], timeout: int = 8) -> tuple[int, str, str]:
         return 124, exc.stdout or '', exc.stderr or 'timeout'
     except Exception as exc:
         return 125, '', str(exc)
+
+
+def run_capture_bytes(cmd: list[str], timeout: int = 8) -> tuple[int, bytes, bytes]:
+    try:
+        proc = subprocess.run(cmd, capture_output=True, timeout=timeout)
+        return proc.returncode, proc.stdout or b'', proc.stderr or b''
+    except FileNotFoundError as exc:
+        return 127, b'', str(exc).encode('utf-8', errors='replace')
+    except PermissionError as exc:
+        return 126, b'', str(exc).encode('utf-8', errors='replace')
+    except subprocess.TimeoutExpired as exc:
+        return 124, exc.stdout or b'', exc.stderr or b'timeout'
+    except Exception as exc:
+        return 125, b'', str(exc).encode('utf-8', errors='replace')
 
 
 def detect_shell() -> str:
@@ -69,6 +85,19 @@ def windows_command_health(cmd: list[str]) -> dict[str, Any]:
     }
 
 
+def choose_windows_bash_cmd() -> list[str]:
+    override = os.environ.get('BMADX_BASH', '').strip()
+    if override:
+        return shlex.split(override)
+    for candidate in (
+        r'C:\Program Files\Git\bin\bash.exe',
+        r'C:\Program Files (x86)\Git\bin\bash.exe',
+    ):
+        if Path(candidate).exists():
+            return [candidate]
+    return ['bash']
+
+
 def choose_windows_python_cmd() -> list[str]:
     if cmd_exists('py'):
         return ['py', '-3']
@@ -87,11 +116,46 @@ def choose_windows_codex_cmd() -> list[str]:
     return ['codex']
 
 
+def clean_windows_output_text(text: str) -> str:
+    return text.replace('\x00', '').replace('\ufeff', '')
+
+
+def decode_windows_output(data: bytes, prefer_utf16: bool = False) -> str:
+    if not data:
+        return ''
+    encodings: list[str] = []
+    utf16_hint = prefer_utf16 or b'\x00' in data or data.startswith((b'\xff\xfe', b'\xfe\xff'))
+    if utf16_hint:
+        encodings.append('utf-16le')
+    preferred = locale.getpreferredencoding(False) or 'utf-8'
+    encodings.extend(['utf-8-sig', preferred, 'utf-8', 'cp949'])
+
+    seen: set[str] = set()
+    for encoding in encodings:
+        if encoding in seen:
+            continue
+        seen.add(encoding)
+        try:
+            return clean_windows_output_text(data.decode(encoding))
+        except UnicodeDecodeError:
+            continue
+    return clean_windows_output_text(data.decode('utf-8', errors='replace'))
+
+
 def parse_wsl_list(output: str) -> dict[str, Any]:
+    output = clean_windows_output_text(output)
     distros: list[dict[str, Any]] = []
     default_name = None
-    for raw in output.splitlines():
-        line = raw.strip('\ufeff').rstrip()
+    lines = [raw.rstrip() for raw in output.splitlines() if raw.strip()]
+    header = next(
+        (line for line in lines if 'name' in line.lower() and 'state' in line.lower() and 'version' in line.lower()),
+        '',
+    )
+    state_col = header.lower().find('state') if header else -1
+    version_col = header.lower().find('version') if header else -1
+
+    for raw in lines:
+        line = raw.rstrip()
         if not line.strip():
             continue
         lower = line.lower().strip()
@@ -100,13 +164,38 @@ def parse_wsl_list(output: str) -> dict[str, Any]:
         if lower.startswith('name') and 'state' in lower and 'version' in lower:
             continue
         is_default = line.lstrip().startswith('*')
-        cleaned = line.replace('*', ' ', 1).strip() if is_default else line.strip()
-        parts = cleaned.split()
-        if not parts:
+        cleaned = line.replace('*', ' ', 1) if is_default else line
+
+        columns = [part.strip() for part in re.split(r'\s{2,}', cleaned.strip()) if part.strip()]
+        if len(columns) >= 3:
+            name = columns[0]
+            state = columns[1]
+            version = columns[2]
+        elif state_col > 0 and version_col > state_col:
+            name = cleaned[:state_col].strip()
+            state = cleaned[state_col:version_col].strip()
+            version = cleaned[version_col:].strip()
+        else:
+            parts = cleaned.strip().split()
+            if len(parts) >= 3:
+                name = ' '.join(parts[:-2])
+                state = parts[-2]
+                version = parts[-1]
+            elif len(parts) == 2:
+                name = parts[0]
+                state = parts[1]
+                version = ''
+            elif len(parts) == 1:
+                name = parts[0]
+                state = ''
+                version = ''
+            else:
+                name = ''
+                state = ''
+                version = ''
+
+        if not name:
             continue
-        name = parts[0]
-        state = parts[1] if len(parts) > 1 else ''
-        version = parts[2] if len(parts) > 2 else ''
         info = {
             'name': name,
             'default': is_default,
@@ -133,12 +222,13 @@ def parse_wsl_list(output: str) -> dict[str, Any]:
 
 
 def list_wsl_names() -> list[str]:
-    rc, out, _ = run_capture(['wsl.exe', '-l', '-q'], timeout=8)
+    rc, out, _ = run_capture_bytes(['wsl.exe', '-l', '-q'], timeout=8)
     if rc != 0:
         return []
+    text = decode_windows_output(out)
     names = []
-    for raw in out.splitlines():
-        name = raw.strip().strip('\ufeff')
+    for raw in text.splitlines():
+        name = clean_windows_output_text(raw).strip()
         if name:
             names.append(name)
     return names
@@ -169,7 +259,9 @@ def probe_wsl() -> dict[str, Any]:
     if not installed:
         return data
 
-    rc, out, err = run_capture(['wsl.exe', '-l', '-v'], timeout=8)
+    rc, out_bytes, err_bytes = run_capture_bytes(['wsl.exe', '-l', '-v'], timeout=8)
+    out = decode_windows_output(out_bytes)
+    err = decode_windows_output(err_bytes)
     data['list_command_ok'] = rc == 0
     data['diagnostics']['list_stdout'] = out.strip()
     data['diagnostics']['list_stderr'] = err.strip()
@@ -184,19 +276,22 @@ def probe_wsl() -> dict[str, Any]:
     data['usable_distro'] = distro
     if not distro:
         return data
-    probe_script = (
-        'for c in bash python3 git codex; do '
-        'if command -v "$c" >/dev/null 2>&1; then echo "$c=1"; else echo "$c=0"; fi; '
-        'done'
-    )
-    rc, out, err = run_capture(['wsl.exe', '-d', distro, '--', 'bash', '-lc', probe_script], timeout=12)
+    probe_script = '; '.join([
+        'printf "bash="; if command -v bash >/dev/null 2>&1; then echo 1; else echo 0; fi',
+        'printf "python3="; if command -v python3 >/dev/null 2>&1; then echo 1; else echo 0; fi',
+        'printf "git="; if command -v git >/dev/null 2>&1; then echo 1; else echo 0; fi',
+        'printf "codex="; if command -v codex >/dev/null 2>&1; then echo 1; else echo 0; fi',
+    ])
+    rc, out_bytes, err_bytes = run_capture_bytes(['wsl.exe', '-d', distro, '--', 'sh', '-lc', probe_script], timeout=12)
+    out = decode_windows_output(out_bytes)
+    err = decode_windows_output(err_bytes)
     data['diagnostics']['probe_stdout'] = out.strip()
     data['diagnostics']['probe_stderr'] = err.strip()
     if rc != 0:
         return data
 
     found = {}
-    for line in out.splitlines():
+    for line in clean_windows_output_text(out).splitlines():
         if '=' not in line:
             continue
         key, value = line.strip().split('=', 1)
@@ -208,15 +303,14 @@ def probe_wsl() -> dict[str, Any]:
 
 
 def probe_windows_native() -> dict[str, Any]:
+    bash_cmd = choose_windows_bash_cmd()
     python_cmd = choose_windows_python_cmd()
     codex_cmd = choose_windows_codex_cmd()
     python_ok = windows_command_health([*python_cmd, '--version'])
     git_ok = windows_command_health(['git', '--version']) if cmd_exists('git') else {
         'command': ['git', '--version'], 'ok': False, 'returncode': 127, 'stdout': '', 'stderr': 'git not found'
     }
-    bash_ok = windows_command_health(['bash', '--version']) if cmd_exists('bash') else {
-        'command': ['bash', '--version'], 'ok': False, 'returncode': 127, 'stdout': '', 'stderr': 'bash not found'
-    }
+    bash_ok = windows_command_health([*bash_cmd, '--version'])
     codex_ok = windows_command_health([*codex_cmd, '--version'])
     return {
         'bash': bash_ok,
@@ -248,19 +342,19 @@ def preferred_mode(os_name: str, wsl: dict[str, Any], native: dict[str, Any]) ->
     return f'native-{os_name or "unknown"}'
 
 
-def build_execution(project_root: Path, mode: str, wsl: dict[str, Any], native: dict[str, Any]) -> dict[str, Any]:
-    tool_path = project_root / 'tools' / 'bmad-codex'
+def build_execution(project_root: Path, tool_root: Path, mode: str, wsl: dict[str, Any], native: dict[str, Any]) -> dict[str, Any]:
+    tool_path = tool_root.resolve()
     if mode == 'windows-wsl':
         distro = wsl.get('usable_distro')
         bash_cmd = ['wsl.exe', '-d', distro, '--', 'bash']
         python_cmd = ['wsl.exe', '-d', distro, '--', 'python3']
         codex_cmd = ['wsl.exe', '-d', distro, '--', 'codex']
     elif mode == 'windows-native':
-        bash_cmd = ['bash']
+        bash_cmd = choose_windows_bash_cmd()
         python_cmd = choose_windows_python_cmd()
         codex_cmd = choose_windows_codex_cmd()
     elif mode == 'windows-native-limited':
-        bash_cmd = ['bash'] if cmd_exists('bash') else []
+        bash_cmd = choose_windows_bash_cmd() if (os.environ.get('BMADX_BASH') or Path(r'C:\Program Files\Git\bin\bash.exe').exists() or Path(r'C:\Program Files (x86)\Git\bin\bash.exe').exists() or cmd_exists('bash')) else []
         python_cmd = choose_windows_python_cmd() if (cmd_exists('py') or cmd_exists('python')) else []
         codex_cmd = choose_windows_codex_cmd()
     else:
@@ -272,14 +366,15 @@ def build_execution(project_root: Path, mode: str, wsl: dict[str, Any], native: 
         'python_cmd': python_cmd,
         'bash_cmd': bash_cmd,
         'codex_cmd': codex_cmd,
-        'bootstrap_native': ['bash', str((tool_path / 'bootstrap.sh').as_posix())],
-        'run_native': ['bash', str((tool_path / 'run.sh').as_posix())],
+        'bootstrap_native': [*bash_cmd, str(tool_path / 'bootstrap.sh')],
+        'run_native': [*bash_cmd, str(tool_path / 'run.sh')],
     }
 
 
-def detect(project_root: Path) -> dict:
+def detect(project_root: Path, tool_root: Path | None = None) -> dict:
     system = platform.system().lower()
     os_name = {'windows': 'windows', 'darwin': 'macos', 'linux': 'linux'}.get(system, system)
+    tool_root = (tool_root or Path(os.environ.get('BMADX_TOOL_ROOT') or (project_root / 'tools' / 'bmad-codex'))).resolve()
     wsl = probe_wsl() if os_name == 'windows' else {
         'installed': False,
         'list_command_ok': False,
@@ -312,7 +407,7 @@ def detect(project_root: Path) -> dict:
         'wsl': wsl,
         'native': native,
         'preferred_mode': mode,
-        'execution': build_execution(project_root, mode, wsl, native),
+        'execution': build_execution(project_root, tool_root, mode, wsl, native),
         'readiness_messages': readiness,
     }
 

@@ -64,7 +64,7 @@ PowerShell에서 아래를 먼저 확인하면 좋습니다.
 
 ```powershell
 wsl -l -v
-wsl -d <YourDistro> -- bash -lc "python3 --version && git --version && codex --version"
+wsl -d Ubuntu-24.04 -- bash -lc "python3 --version && git --version && codex --version"
 ```
 
 정상적인 WSL 사용을 위해서는 단순히 `wsl.exe`가 있는 것만으로는 부족합니다.
@@ -76,6 +76,11 @@ wsl -d <YourDistro> -- bash -lc "python3 --version && git --version && codex --v
 - `codex`
 
 `docker-desktop`만 있고 일반 Linux distro가 없으면 `windows-wsl`로 진행하지 않습니다.
+런처를 실행한 뒤에는 `.bmadx/state/host-env.json`에서 아래 값도 확인하세요.
+
+- `preferred_mode: windows-wsl`
+- `wsl.ready: true`
+- `wsl.requirements.bash/python3/git/codex: true`
 
 ## Git Bash에 대한 권장 사항
 
@@ -166,6 +171,8 @@ py -3 .\tools\bmad-codex\run.py
 5. `.bmadx/state/sprint-status.path` 확인
 6. `.bmadx/state/last-codex-*.raw.log` 확인
 7. `.bmadx/state/last-gate-*.log` 확인
+
+Windows에서 WSL 안 `codex`가 비어 있거나 깨져 있다면, 이 starter에 특정 Desktop 앱 경로를 하드코딩하지는 마세요. 이 저장소는 **WSL 안에서 `codex`가 정상 실행 가능하다는 전제**만 두고, 실제 브리지는 각 환경에서 별도로 준비하는 쪽이 안전합니다.
 
 ## 코딩 LLM용 표준 지시문
 

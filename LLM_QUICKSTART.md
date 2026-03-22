@@ -32,6 +32,15 @@
 - 그 외에는 `host-env.json`의 진단 메시지를 먼저 확인합니다.
 - Windows에서는 raw Git Bash 명령보다 Python 런처를 우선 사용합니다.
 
+빠른 확인 명령:
+
+```powershell
+wsl -l -v
+wsl -d Ubuntu-24.04 -- bash -lc "python3 --version && git --version && codex --version"
+```
+
+런처 실행 뒤에는 `.bmadx/state/host-env.json`의 `preferred_mode`가 `windows-wsl`인지 확인합니다.
+
 ## Done criteria
 
 - `bootstrap.py`가 성공적으로 끝납니다.
