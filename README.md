@@ -9,6 +9,8 @@ mkdir -p tools
 git clone <THIS_REPO_URL> tools/bmad-codex
 ```
 
+기존 적용 프로젝트 업그레이드 방법은 [UPGRADE.md](./UPGRADE.md)를 참고하세요.
+
 ## 핵심 변경점
 
 v6부터는 실행 전에 운영 환경을 먼저 감지하고, 그 결과를 `.bmadx/state/host-env.json`에 기록합니다.
