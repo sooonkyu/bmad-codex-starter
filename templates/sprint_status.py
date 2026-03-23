@@ -13,7 +13,6 @@ except Exception:
 CANDIDATE_PATHS = [
     ".bmad-ephemeral/sprint-status.yaml",
     "_bmad-output/implementation-artifacts/sprint-status.yaml",
-    "docs/sprint-status.yaml",
     "sprint-status.yaml",
 ]
 
@@ -30,7 +29,7 @@ def locate_sprint_status(root: Path) -> Path | None:
         p = root / rel
         if p.exists():
             return p
-    for base in [root / ".bmad-ephemeral", root / "_bmad-output", root / "docs", root]:
+    for base in [root / ".bmad-ephemeral", root / "_bmad-output", root]:
         if base.exists():
             for p in base.rglob("sprint-status.yaml"):
                 return p

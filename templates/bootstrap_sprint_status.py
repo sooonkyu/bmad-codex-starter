@@ -53,7 +53,6 @@ def extract_story_keys_from_files(root: Path) -> list[str]:
     search_dirs = [
         root / '_bmad-output' / 'planning-artifacts',
         root / '_bmad-output' / 'implementation-artifacts',
-        root / 'docs',
     ]
     for base in search_dirs:
         if not base.exists():

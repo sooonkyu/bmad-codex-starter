@@ -26,116 +26,329 @@ def find_first(*names: str) -> str | None:
     return None
 
 
-def node_manifest() -> dict | None:
-    pkg = ROOT / "package.json"
-    if not pkg.exists():
-        return None
+def command_in_dir(path: Path, cmd: str) -> str:
+    rel = path.relative_to(ROOT)
+    if str(rel) == ".":
+        return cmd
+    return f"cd {rel.as_posix()} && {cmd}"
+
+
+def dedupe(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+
+def load_toml(path: Path) -> dict:
+    if not path.exists() or not tomllib:
+        return {}
+    return tomllib.loads(path.read_text(encoding="utf-8"))
+
+
+def node_workspace_paths() -> list[Path]:
+    candidates: list[Path] = []
+    roots = [ROOT, ROOT / "frontend", ROOT / "web", ROOT / "app"]
+    for base in roots:
+        if (base / "package.json").exists():
+            candidates.append(base)
+    for parent_name in ("apps", "packages"):
+        parent = ROOT / parent_name
+        if not parent.exists():
+            continue
+        for child in sorted(parent.iterdir(), key=lambda p: p.name):
+            if child.is_dir() and (child / "package.json").exists():
+                candidates.append(child)
+    return sorted({path.resolve() for path in candidates}, key=lambda p: str(p))
+
+
+def node_workspace(path: Path) -> dict:
+    pkg = path / "package.json"
     data = read_json(pkg)
     scripts = data.get("scripts", {}) or {}
     if "packageManager" in data:
         pm = str(data["packageManager"]).split("@", 1)[0]
-    elif (ROOT / "pnpm-lock.yaml").exists():
+    elif (path / "pnpm-lock.yaml").exists():
         pm = "pnpm"
-    elif (ROOT / "yarn.lock").exists():
+    elif (path / "yarn.lock").exists():
         pm = "yarn"
-    elif (ROOT / "package-lock.json").exists():
+    elif (path / "package-lock.json").exists():
         pm = "npm"
     else:
         pm = "npm"
+
     install_cmd = {
         "pnpm": "pnpm install --frozen-lockfile",
         "yarn": "yarn install --frozen-lockfile",
-        "npm": "npm ci" if (ROOT / "package-lock.json").exists() else "npm install",
+        "npm": "npm ci" if (path / "package-lock.json").exists() else "npm install",
     }.get(pm, "npm install")
-    manifest = {
-        "runtime": {"primary": "node", "version_file": find_first(".nvmrc", ".node-version")},
-        "package_manager": pm,
-        "commands": {
-            "install": install_cmd,
-            "lint": f"{pm} run lint" if "lint" in scripts else "",
-            "typecheck": f"{pm} run typecheck" if "typecheck" in scripts else "",
-            "test_unit": f"{pm} run test" if "test" in scripts else "",
-            "test_integration": f"{pm} run test:integration" if "test:integration" in scripts else "",
-            "test_e2e": f"{pm} run test:e2e" if "test:e2e" in scripts else "",
-            "build": f"{pm} run build" if "build" in scripts else "",
-        },
-        "bootstrap": {
-            "env_file": find_first(".env.example", ".env.local.example"),
-            "services": ["docker compose up -d"] if ((ROOT / "docker-compose.yml").exists() or (ROOT / "compose.yml").exists()) else [],
-            "migrations": "",
-        },
+
+    version_files = []
+    for name in (".nvmrc", ".node-version"):
+        candidate = path / name
+        if candidate.exists():
+            version_files.append(str(candidate.relative_to(ROOT)))
+
+    commands = {
+        "install": command_in_dir(path, install_cmd),
+        "lint": command_in_dir(path, f"{pm} run lint") if "lint" in scripts else "",
+        "typecheck": command_in_dir(path, f"{pm} run typecheck") if "typecheck" in scripts else "",
+        "test_unit": command_in_dir(path, f"{pm} run test") if "test" in scripts else "",
+        "test_integration": command_in_dir(path, f"{pm} run test:integration") if "test:integration" in scripts else "",
+        "test_e2e": command_in_dir(path, f"{pm} run test:e2e") if "test:e2e" in scripts else "",
+        "build": command_in_dir(path, f"{pm} run build") if "build" in scripts else "",
     }
-    if (ROOT / "prisma").exists():
-        manifest["bootstrap"]["migrations"] = f"{pm} exec prisma migrate deploy" if pm != "npm" else "npx prisma migrate deploy"
-    return manifest
 
-
-def python_manifest() -> dict | None:
-    pyproject = ROOT / "pyproject.toml"
-    req = ROOT / "requirements.txt"
-    if not pyproject.exists() and not req.exists():
-        return None
-    manager = "pip"
-    commands = {"install": "", "lint": "", "typecheck": "", "test_unit": "", "test_integration": "", "test_e2e": "", "build": ""}
-    if pyproject.exists() and tomllib:
-        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-        tool = data.get("tool", {}) or {}
-        if "uv" in tool or (ROOT / "uv.lock").exists():
-            manager = "uv"; commands["install"] = "uv sync"
-        elif "poetry" in tool or (ROOT / "poetry.lock").exists():
-            manager = "poetry"; commands["install"] = "poetry install"
-        else:
-            commands["install"] = "python -m pip install -e ."
-        commands["lint"] = "ruff check ." if ((ROOT / ".ruff.toml").exists() or "ruff" in str(tool).lower()) else ""
-        commands["typecheck"] = "mypy ." if "mypy" in str(tool).lower() else ""
-        commands["test_unit"] = "pytest" if ((ROOT / "tests").exists() or "pytest" in str(tool).lower()) else ""
-        commands["build"] = "python -m build" if "build-system" in data else ""
-    else:
-        commands["install"] = "python -m pip install -r requirements.txt"
-        commands["test_unit"] = "pytest" if (ROOT / "tests").exists() else ""
-    migrations = ""
-    if (ROOT / "alembic.ini").exists():
-        migrations = "alembic upgrade head"
-    elif (ROOT / "manage.py").exists():
-        migrations = "python manage.py migrate"
     return {
-        "runtime": {"primary": "python", "version_file": find_first(".python-version")},
-        "package_manager": manager,
+        "name": path.name if path != ROOT else "root-node",
+        "path": str(path.relative_to(ROOT)),
+        "runtime": "node",
+        "package_manager": pm,
+        "version_files": version_files,
         "commands": commands,
-        "bootstrap": {
-            "env_file": find_first(".env.example", ".env.local.example"),
-            "services": ["docker compose up -d"] if ((ROOT / "docker-compose.yml").exists() or (ROOT / "compose.yml").exists()) else [],
-            "migrations": migrations,
-        },
     }
 
 
-def java_manifest() -> dict | None:
+def python_workspace_paths() -> list[Path]:
+    candidates: list[Path] = []
+    roots = [ROOT, ROOT / "backend", ROOT / "api"]
+    for base in roots:
+        if (base / "pyproject.toml").exists() or (base / "requirements.txt").exists():
+            candidates.append(base)
+
+    services_root = ROOT / "services"
+    if services_root.exists():
+        for child in sorted(services_root.iterdir(), key=lambda p: p.name):
+            if child.is_dir() and ((child / "pyproject.toml").exists() or (child / "requirements.txt").exists()):
+                candidates.append(child)
+
+    return sorted({path.resolve() for path in candidates}, key=lambda p: str(p))
+
+
+def python_workspace(path: Path) -> dict:
+    pyproject = path / "pyproject.toml"
+    requirements = path / "requirements.txt"
+    data = load_toml(pyproject)
+    tool = data.get("tool", {}) or {}
+
+    manager = "pip"
+    commands = {
+        "install": "",
+        "lint": "",
+        "typecheck": "",
+        "test_unit": "",
+        "test_integration": "",
+        "test_e2e": "",
+        "build": "",
+    }
+
+    if pyproject.exists() and tomllib:
+        if "uv" in tool or (path / "uv.lock").exists():
+            manager = "uv"
+            commands["install"] = command_in_dir(path, "uv sync")
+        elif "poetry" in tool or (path / "poetry.lock").exists():
+            manager = "poetry"
+            commands["install"] = command_in_dir(path, "poetry install")
+        else:
+            commands["install"] = command_in_dir(path, "python -m pip install -e .")
+
+        tool_blob = json.dumps(tool).lower()
+        if (path / ".ruff.toml").exists() or "ruff" in tool_blob:
+            commands["lint"] = command_in_dir(path, "ruff check .")
+        if "mypy" in tool_blob:
+            commands["typecheck"] = command_in_dir(path, "mypy .")
+        if (path / "tests").exists() or "pytest" in tool_blob:
+            commands["test_unit"] = command_in_dir(path, "pytest")
+        if "build-system" in data:
+            commands["build"] = command_in_dir(path, "python -m build")
+    elif requirements.exists():
+        commands["install"] = command_in_dir(path, "python -m pip install -r requirements.txt")
+        if (path / "tests").exists():
+            commands["test_unit"] = command_in_dir(path, "pytest")
+
+    version_files = []
+    for name in (".python-version",):
+        candidate = path / name
+        if candidate.exists():
+            version_files.append(str(candidate.relative_to(ROOT)))
+
+    migrations = ""
+    if (path / "alembic.ini").exists():
+        migrations = command_in_dir(path, "alembic upgrade head")
+    elif (path / "manage.py").exists():
+        migrations = command_in_dir(path, "python manage.py migrate")
+
+    return {
+        "name": path.name if path != ROOT else "root-python",
+        "path": str(path.relative_to(ROOT)),
+        "runtime": "python",
+        "package_manager": manager,
+        "version_files": version_files,
+        "commands": commands,
+        "migrations": migrations,
+    }
+
+
+def java_manifest() -> list[dict]:
     if not ((ROOT / "pom.xml").exists() or (ROOT / "build.gradle").exists() or (ROOT / "build.gradle.kts").exists()):
-        return None
+        return []
     gradle = (ROOT / "gradlew").exists() or (ROOT / "build.gradle").exists() or (ROOT / "build.gradle.kts").exists()
     if gradle:
         runner = "./gradlew" if (ROOT / "gradlew").exists() else "gradle"
-        return {"runtime": {"primary": "java", "version_file": None}, "package_manager": "gradle", "commands": {"install": f"{runner} dependencies || true", "lint": "", "typecheck": "", "test_unit": f"{runner} test", "test_integration": "", "test_e2e": "", "build": f"{runner} build"}, "bootstrap": {"env_file": find_first(".env.example"), "services": [], "migrations": ""}}
-    return {"runtime": {"primary": "java", "version_file": None}, "package_manager": "maven", "commands": {"install": "mvn -q -DskipTests dependency:resolve", "lint": "", "typecheck": "", "test_unit": "mvn test", "test_integration": "", "test_e2e": "", "build": "mvn -DskipTests package"}, "bootstrap": {"env_file": find_first(".env.example"), "services": [], "migrations": ""}}
+        return [{
+            "name": "root-java",
+            "path": ".",
+            "runtime": "java",
+            "package_manager": "gradle",
+            "version_files": [],
+            "commands": {
+                "install": f"{runner} dependencies || true",
+                "lint": "",
+                "typecheck": "",
+                "test_unit": f"{runner} test",
+                "test_integration": "",
+                "test_e2e": "",
+                "build": f"{runner} build",
+            },
+        }]
+    return [{
+        "name": "root-java",
+        "path": ".",
+        "runtime": "java",
+        "package_manager": "maven",
+        "version_files": [],
+        "commands": {
+            "install": "mvn -q -DskipTests dependency:resolve",
+            "lint": "",
+            "typecheck": "",
+            "test_unit": "mvn test",
+            "test_integration": "",
+            "test_e2e": "",
+            "build": "mvn -DskipTests package",
+        },
+    }]
 
 
-def go_manifest() -> dict | None:
+def go_manifest() -> list[dict]:
     if not (ROOT / "go.mod").exists():
-        return None
-    return {"runtime": {"primary": "go", "version_file": None}, "package_manager": "go", "commands": {"install": "go mod download", "lint": "", "typecheck": "go test ./...", "test_unit": "go test ./...", "test_integration": "", "test_e2e": "", "build": "go build ./..."}, "bootstrap": {"env_file": find_first(".env.example"), "services": [], "migrations": ""}}
+        return []
+    return [{
+        "name": "root-go",
+        "path": ".",
+        "runtime": "go",
+        "package_manager": "go",
+        "version_files": [],
+        "commands": {
+            "install": "go mod download",
+            "lint": "",
+            "typecheck": "go test ./...",
+            "test_unit": "go test ./...",
+            "test_integration": "",
+            "test_e2e": "",
+            "build": "go build ./...",
+        },
+    }]
 
 
-def rust_manifest() -> dict | None:
+def rust_manifest() -> list[dict]:
     if not (ROOT / "Cargo.toml").exists():
-        return None
-    return {"runtime": {"primary": "rust", "version_file": find_first("rust-toolchain.toml", "rust-toolchain")}, "package_manager": "cargo", "commands": {"install": "cargo fetch", "lint": "cargo clippy --all-targets --all-features -- -D warnings" if (ROOT / "src").exists() else "", "typecheck": "cargo check", "test_unit": "cargo test", "test_integration": "", "test_e2e": "", "build": "cargo build"}, "bootstrap": {"env_file": find_first(".env.example"), "services": [], "migrations": ""}}
+        return []
+    version_files = []
+    for name in ("rust-toolchain.toml", "rust-toolchain"):
+        candidate = ROOT / name
+        if candidate.exists():
+            version_files.append(name)
+    return [{
+        "name": "root-rust",
+        "path": ".",
+        "runtime": "rust",
+        "package_manager": "cargo",
+        "version_files": version_files,
+        "commands": {
+            "install": "cargo fetch",
+            "lint": "cargo clippy --all-targets --all-features -- -D warnings" if (ROOT / "src").exists() else "",
+            "typecheck": "cargo check",
+            "test_unit": "cargo test",
+            "test_integration": "",
+            "test_e2e": "",
+            "build": "cargo build",
+        },
+    }]
 
 
-def php_manifest() -> dict | None:
+def php_manifest() -> list[dict]:
     if not (ROOT / "composer.json").exists():
-        return None
-    return {"runtime": {"primary": "php", "version_file": None}, "package_manager": "composer", "commands": {"install": "composer install", "lint": "", "typecheck": "", "test_unit": "vendor/bin/phpunit" if (ROOT / "vendor/bin/phpunit").exists() or (ROOT / "phpunit.xml").exists() else "", "test_integration": "", "test_e2e": "", "build": ""}, "bootstrap": {"env_file": find_first(".env.example"), "services": [], "migrations": "php artisan migrate --force" if (ROOT / "artisan").exists() else ""}}
+        return []
+    migrations = "php artisan migrate --force" if (ROOT / "artisan").exists() else ""
+    return [{
+        "name": "root-php",
+        "path": ".",
+        "runtime": "php",
+        "package_manager": "composer",
+        "version_files": [],
+        "commands": {
+            "install": "composer install",
+            "lint": "",
+            "typecheck": "",
+            "test_unit": "vendor/bin/phpunit" if (ROOT / "vendor/bin/phpunit").exists() or (ROOT / "phpunit.xml").exists() else "",
+            "test_integration": "",
+            "test_e2e": "",
+            "build": "",
+        },
+        "migrations": migrations,
+    }]
+
+
+def aggregate_manifest(workspaces: list[dict]) -> dict:
+    commands: dict[str, list[str]] = {
+        "install": [],
+        "lint": [],
+        "typecheck": [],
+        "test_unit": [],
+        "test_integration": [],
+        "test_e2e": [],
+        "build": [],
+    }
+    services: list[str] = []
+    migrations: list[str] = []
+    version_files: list[str] = []
+
+    for workspace in workspaces:
+        version_files.extend(workspace.get("version_files", []))
+        for key, value in workspace.get("commands", {}).items():
+            if value:
+                commands[key].append(value)
+        migration = workspace.get("migrations", "")
+        if migration:
+            migrations.append(migration)
+
+    if (ROOT / "docker-compose.yml").exists() or (ROOT / "compose.yml").exists():
+        services.append("docker compose up -d")
+
+    env_files = dedupe([name for name in (find_first(".env.example", ".env.local.example"),) if name])
+    detected = dedupe([workspace["runtime"] for workspace in workspaces])
+    primary = detected[0] if len(detected) == 1 else ("polyglot" if detected else "unknown")
+
+    return {
+        "runtime": {
+            "primary": primary,
+            "detected": detected,
+            "version_files": dedupe(version_files),
+        },
+        "package_manager": workspaces[0]["package_manager"] if len(workspaces) == 1 else ("multi" if workspaces else "unknown"),
+        "workspaces": workspaces,
+        "commands": {key: dedupe(values) for key, values in commands.items()},
+        "bootstrap": {
+            "env_file": env_files[0] if env_files else None,
+            "env_files": env_files,
+            "services": dedupe(services),
+            "migrations": dedupe(migrations),
+        },
+    }
 
 
 def merge_overrides(base: dict) -> dict:
@@ -143,19 +356,30 @@ def merge_overrides(base: dict) -> dict:
     if not override_path.exists():
         return base
     override = read_json(override_path)
+
     def deep_merge(dst: dict, src: dict) -> dict:
-        for k, v in src.items():
-            if isinstance(v, dict) and isinstance(dst.get(k), dict):
-                dst[k] = deep_merge(dst[k], v)
+        for key, value in src.items():
+            if isinstance(value, dict) and isinstance(dst.get(key), dict):
+                dst[key] = deep_merge(dst[key], value)
             else:
-                dst[k] = v
+                dst[key] = value
         return dst
+
     return deep_merge(base, override)
 
 
 def main() -> int:
     STATE.mkdir(parents=True, exist_ok=True)
-    manifest = node_manifest() or python_manifest() or java_manifest() or go_manifest() or rust_manifest() or php_manifest() or {"runtime": {"primary": "unknown", "version_file": None}, "package_manager": "unknown", "commands": {"install": "", "lint": "", "typecheck": "", "test_unit": "", "test_integration": "", "test_e2e": "", "build": ""}, "bootstrap": {"env_file": find_first(".env.example", ".env.local.example"), "services": [], "migrations": ""}}
+
+    workspaces: list[dict] = []
+    workspaces.extend(node_workspace(path) for path in node_workspace_paths())
+    workspaces.extend(python_workspace(path) for path in python_workspace_paths())
+    workspaces.extend(java_manifest())
+    workspaces.extend(go_manifest())
+    workspaces.extend(rust_manifest())
+    workspaces.extend(php_manifest())
+
+    manifest = aggregate_manifest(workspaces)
     manifest = merge_overrides(manifest)
     OUT.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"wrote {OUT}")

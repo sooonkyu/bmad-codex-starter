@@ -10,6 +10,10 @@ export BMADX_PROJECT_ROOT="$PROJECT_ROOT"
 export BMADX_TOOL_ROOT="$TOOL_ROOT"
 
 find_python() {
+  if command -v py >/dev/null 2>&1; then
+    echo py
+    return 0
+  fi
   if command -v python3 >/dev/null 2>&1; then
     echo python3
     return 0

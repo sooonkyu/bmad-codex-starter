@@ -4,6 +4,7 @@
 ## Mandatory execution contract
 - Before any work, read:
   - `.bmadx/state/host-env.json`
+  - `.bmadx/state/orchestration-state.json`
   - `.bmadx/state/runtime-manifest.json`
   - `.bmadx/state/role-map.json`
   - relevant story/review files under `.bmadx/`

@@ -280,7 +280,7 @@ def probe_wsl() -> dict[str, Any]:
         'printf "bash="; if command -v bash >/dev/null 2>&1; then echo 1; else echo 0; fi',
         'printf "python3="; if command -v python3 >/dev/null 2>&1; then echo 1; else echo 0; fi',
         'printf "git="; if command -v git >/dev/null 2>&1; then echo 1; else echo 0; fi',
-        'printf "codex="; if command -v codex >/dev/null 2>&1; then echo 1; else echo 0; fi',
+        'printf "codex="; if bash -lc "codex --version >/dev/null 2>&1"; then echo 1; else echo 0; fi',
     ])
     rc, out_bytes, err_bytes = run_capture_bytes(['wsl.exe', '-d', distro, '--', 'sh', '-lc', probe_script], timeout=12)
     out = decode_windows_output(out_bytes)
@@ -328,6 +328,15 @@ def resolve_linux_like_codex() -> list[str]:
     return ['codex']
 
 
+def windows_to_wsl_path(path: Path) -> str:
+    resolved = path.resolve()
+    drive = resolved.drive.rstrip(':').lower()
+    tail = resolved.as_posix().split(':', 1)[-1].lstrip('/')
+    if drive:
+        return f'/mnt/{drive}/{tail}'
+    return resolved.as_posix()
+
+
 def preferred_mode(os_name: str, wsl: dict[str, Any], native: dict[str, Any]) -> str:
     if os_name == 'windows':
         if wsl.get('ready'):
@@ -349,25 +358,45 @@ def build_execution(project_root: Path, tool_root: Path, mode: str, wsl: dict[st
         bash_cmd = ['wsl.exe', '-d', distro, '--', 'bash']
         python_cmd = ['wsl.exe', '-d', distro, '--', 'python3']
         codex_cmd = ['wsl.exe', '-d', distro, '--', 'codex']
+        project_wsl = windows_to_wsl_path(project_root)
+        tool_wsl = windows_to_wsl_path(tool_path)
+        bootstrap_native = [
+            'wsl.exe', '-d', distro, '--', 'bash', '-lc',
+            f'export BMADX_PROJECT_ROOT={shlex.quote(project_wsl)}; '
+            f'export BMADX_TOOL_ROOT={shlex.quote(tool_wsl)}; '
+            f'bash {shlex.quote(tool_wsl + "/bootstrap.sh")}'
+        ]
+        run_native = [
+            'wsl.exe', '-d', distro, '--', 'bash', '-lc',
+            f'export BMADX_PROJECT_ROOT={shlex.quote(project_wsl)}; '
+            f'export BMADX_TOOL_ROOT={shlex.quote(tool_wsl)}; '
+            f'bash {shlex.quote(tool_wsl + "/run.sh")}'
+        ]
     elif mode == 'windows-native':
         bash_cmd = choose_windows_bash_cmd()
         python_cmd = choose_windows_python_cmd()
         codex_cmd = choose_windows_codex_cmd()
+        bootstrap_native = [*bash_cmd, str(tool_path / 'bootstrap.sh')]
+        run_native = [*bash_cmd, str(tool_path / 'run.sh')]
     elif mode == 'windows-native-limited':
         bash_cmd = choose_windows_bash_cmd() if (os.environ.get('BMADX_BASH') or Path(r'C:\Program Files\Git\bin\bash.exe').exists() or Path(r'C:\Program Files (x86)\Git\bin\bash.exe').exists() or cmd_exists('bash')) else []
         python_cmd = choose_windows_python_cmd() if (cmd_exists('py') or cmd_exists('python')) else []
         codex_cmd = choose_windows_codex_cmd()
+        bootstrap_native = [*bash_cmd, str(tool_path / 'bootstrap.sh')] if bash_cmd else []
+        run_native = [*bash_cmd, str(tool_path / 'run.sh')] if bash_cmd else []
     else:
         bash_cmd = ['bash']
         python_cmd = [shutil.which('python3') or shutil.which('python') or 'python3']
         codex_cmd = resolve_linux_like_codex()
+        bootstrap_native = [*bash_cmd, str(tool_path / 'bootstrap.sh')]
+        run_native = [*bash_cmd, str(tool_path / 'run.sh')]
 
     return {
         'python_cmd': python_cmd,
         'bash_cmd': bash_cmd,
         'codex_cmd': codex_cmd,
-        'bootstrap_native': [*bash_cmd, str(tool_path / 'bootstrap.sh')],
-        'run_native': [*bash_cmd, str(tool_path / 'run.sh')],
+        'bootstrap_native': bootstrap_native,
+        'run_native': run_native,
     }
 
 
